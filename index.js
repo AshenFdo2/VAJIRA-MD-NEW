@@ -2,6 +2,10 @@ const { default: makeWASocket, DisconnectReason, useSingleFileAuthState } = requ
 const { Boom } = require('@hapi/boom');
 const fs = require('fs');
 
+// Import plugins
+const welcomePlugin = require('./plugins/welcome');
+const antiLinkPlugin = require('./plugins/antilink');
+
 // Initialize state
 const { state, saveState } = useSingleFileAuthState('./auth_info.json');
 
@@ -33,21 +37,8 @@ function startBot() {
 
     // Handle group participants update
     sock.ev.on('group-participants.update', async (message) => {
-        // Send welcome message when a new member joins
-        if (message.action === 'add' && message.id === groupId) {
-            message.participants.forEach(participant => {
-                const welcomeMessage = `👋 Welcome to ${groupName}! 🎉 This is an airdrop group where you can earn money and get free tips. Don't forget to add your friends to help the community grow!`;
-                sock.sendMessage(groupId, { text: welcomeMessage });
-            });
-        }
-
-        // Send thank-you message if someone adds new members
-        if (message.action === 'add' && message.id === groupId) {
-            message.participants.forEach(() => {
-                const thankMessage = `🙏 Thank you for adding new members! Let's grow our community together.`;
-                sock.sendMessage(groupId, { text: thankMessage });
-            });
-        }
+        // Execute the welcome plugin
+        await welcomePlugin.execute(sock, groupId, groupName, message);
     });
 
     // Handle messages
@@ -55,26 +46,8 @@ function startBot() {
         const message = messageUpdate.messages[0];
         if (!message.message) return;
 
-        const chatId = message.key.remoteJid;
-        const sender = message.key.participant || message.key.remoteJid;
-        const senderId = sender.split('@')[0];
-
-        // Anti-link logic
-        if (chatId === groupId && forbiddenLinksPattern.test(message.message.conversation)) {
-            try {
-                const groupMetadata = await sock.groupMetadata(chatId);
-                const groupAdmins = groupMetadata.participants.filter(p => p.admin !== null).map(admin => admin.id);
-                const isAdmin = groupAdmins.includes(sender);
-
-                if (adminOnly && !isAdmin) {
-                    await sock.sendMessage(chatId, { delete: { id: message.key.id, remoteJid: chatId, fromMe: false } });
-                    const warnMessage = `🚫 Links are not allowed unless you're an admin. The message from ${senderId} has been removed.`;
-                    await sock.sendMessage(chatId, { text: warnMessage });
-                }
-            } catch (error) {
-                console.error('Error handling link deletion:', error);
-            }
-        }
+        // Execute the anti-link plugin
+        await antiLinkPlugin.execute(sock, message, groupId, adminOnly, forbiddenLinksPattern);
     });
 }
 
